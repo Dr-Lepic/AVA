@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 *.db
 .ruff_cache/
+
+# Hermes agent state: plans, sessions, scratch. Not project code — never commit.
+.hermes/
