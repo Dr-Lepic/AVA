@@ -1,0 +1,20 @@
+[project]
+name = "ava"
+version = "0.1.0"
+description = "AVA — a terminal personal assistant built on the OpenAI Agents SDK"
+requires-python = ">=3.10"
+dependencies = [
+    "openai-agents",
+    "mcp>=1.19.0,<3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
