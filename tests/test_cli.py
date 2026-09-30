@@ -29,12 +29,13 @@ class FakeEvent:
 
 
 class FakeDelta:
-    def __init__(self, delta):
+    def __init__(self, delta, chunk_type="response.output_text.delta"):
         self.delta = delta
+        self.type = chunk_type
 
 
-def _raw(text):
-    return FakeEvent("raw_response_event", data=FakeDelta(text))
+def _raw(text, chunk_type=cli.OUTPUT_TEXT_DELTA):
+    return FakeEvent("raw_response_event", data=FakeDelta(text, chunk_type))
 
 
 def _item(item):
@@ -88,11 +89,73 @@ def test_format_tool_call_truncates_many_args():
     assert cli._format_tool_call(item).count("=") == 3
 
 
-def test_tool_lines_go_to_stderr(monkeypatch, capsys):
+def test_conversation_goes_to_stdout_and_tools_to_stderr(capsys):
     """Diagnostics must not pollute piped stdout."""
-    _install_stream(monkeypatch, [_raw("hi")], final="hi")
-    out = cli.write_text("AVA", "ok")
-    assert out is not None
+    cli.write_text("hello")
+    assert "hello" in capsys.readouterr().out
+
+    cli.write_diagnostic("  · save_note()")
+    captured = capsys.readouterr()
+    assert "save_note" in captured.err
+    assert "save_note" not in captured.out
+
+
+# --- reasoning-leak suppression (the second real bug) --------------------
+
+
+def test_reasoning_deltas_are_not_output_text():
+    """A reasoning model streams its scratchpad through the same event type."""
+    event = FakeEvent(
+        "raw_response_event",
+        data=FakeDelta(" — the user wants a note", "response.reasoning_text.delta"),
+    )
+    assert cli._is_output_text(event) is False
+
+
+def test_output_text_deltas_are_shown():
+    event = FakeEvent(
+        "raw_response_event", data=FakeDelta("Here you go", "response.output_text.delta")
+    )
+    assert cli._is_output_text(event) is True
+
+
+def test_unlabelled_chunk_is_shown():
+    """A provider that does not label chunks must not lose its output."""
+    event = FakeEvent("raw_response_event", data=FakeDelta("text", None))
+    assert cli._is_output_text(event) is True
+
+
+async def test_reasoning_text_never_reaches_the_user(monkeypatch, capsys):
+    _install_stream(
+        monkeypatch,
+        [
+            _raw("I should hand off to Notes.", "response.reasoning_text.delta"),
+            _raw("Saved your wifi password."),
+        ],
+        final="Saved your wifi password.",
+    )
+    await cli._respond(_agent(), None, "remember it", None)
+    out = capsys.readouterr().out
+    assert "Saved your wifi password." in out
+    assert "I should hand off" not in out
+
+
+# --- tool-json detection (the real fix) ---------------------------------
+
+
+def test_tool_json_delta_is_detected():
+    assert cli._looks_like_tool_json('{"input":"milk"}') is True
+
+
+def test_assistant_text_is_not_tool_json():
+    assert cli._looks_like_tool_json("Noted.") is False
+    assert cli._looks_like_tool_json("Here you go: ") is False
+    assert cli._looks_like_tool_json('{"title": "x"}') is True
+
+
+def test_empty_delta_is_not_tool_json():
+    assert cli._looks_like_tool_json("") is False
+    assert cli._looks_like_tool_json("   ") is False
 
 
 # --- streaming -----------------------------------------------------------
@@ -130,7 +193,8 @@ async def test_reports_when_a_specialist_handled_it(monkeypatch, capsys):
         cli.Runner, "run_streamed", staticmethod(lambda *a, **k: SpecialistResult())
     )
     await cli._respond(_agent(), None, "note this", None)
-    assert "Notes" in capsys.readouterr().out
+    # The specialist line is a diagnostic, so it goes to stderr by design.
+    assert "Notes" in capsys.readouterr().err
 
 
 async def test_returns_call_count_and_summary(monkeypatch):
@@ -150,6 +214,8 @@ def _agent():
 async def test_quit_exits_cleanly(monkeypatch):
     monkeypatch.setattr(cli, "build_agent", lambda *a, **k: None)
     monkeypatch.setattr(cli, "configure_llm", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "build_model", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_report_overdue", lambda *a, **k: None)
 
     async def fake_input(*a, **k):
         return "/quit"
@@ -162,6 +228,8 @@ async def test_eof_exits_cleanly(monkeypatch):
     """Piped input runs out; the loop must exit, not hang."""
     monkeypatch.setattr(cli, "build_agent", lambda *a, **k: None)
     monkeypatch.setattr(cli, "configure_llm", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "build_model", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_report_overdue", lambda *a, **k: None)
 
     async def fake_input(*a, **k):
         raise EOFError
@@ -173,6 +241,8 @@ async def test_eof_exits_cleanly(monkeypatch):
 async def test_ctrl_c_at_prompt_exits(monkeypatch):
     monkeypatch.setattr(cli, "build_agent", lambda *a, **k: None)
     monkeypatch.setattr(cli, "configure_llm", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "build_model", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_report_overdue", lambda *a, **k: None)
 
     async def fake_input(*a, **k):
         raise KeyboardInterrupt
@@ -184,6 +254,8 @@ async def test_ctrl_c_at_prompt_exits(monkeypatch):
 async def test_blank_line_is_ignored(monkeypatch):
     monkeypatch.setattr(cli, "build_agent", lambda *a, **k: None)
     monkeypatch.setattr(cli, "configure_llm", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "build_model", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "_report_overdue", lambda *a, **k: None)
 
     replies = iter(["", "   ", "/quit"])
 
@@ -195,11 +267,14 @@ async def test_blank_line_is_ignored(monkeypatch):
 
 
 def _fake_config():
+    """Mirrors the real Config: db_path, vault_path, and state_path are Paths."""
+    from pathlib import Path
+
     class FakeConfig:
-        db_path = "/tmp/ava-cli-fake.db"
-        vault_path = "/tmp/ava-cli-fake-vault"
+        db_path = Path("/tmp/ava-cli-fake.db")
+        vault_path = Path("/tmp/ava-cli-fake-vault")
+        state_path = Path("/tmp/ava-cli-fake.json")
         model = "openrouter/free"
-        state_path = "/tmp/ava-cli-fake.json"
         api_key = "sk-or-v1-fake"
         tz = "Asia/Dhaka"
 
@@ -217,7 +292,8 @@ def test_main_reports_missing_key(monkeypatch, capsys):
 
     monkeypatch.setattr(cli, "load_config", boom)
     assert cli.main() == 1
-    assert "OPENROUTER_API_KEY" in capsys.readouterr().out
+    # Diagnostics deliberately go to stderr so stdout stays pipeable.
+    assert "OPENROUTER_API_KEY" in capsys.readouterr().err
 
 
 def test_banner_mentions_quit():
