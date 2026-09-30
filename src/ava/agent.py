@@ -52,16 +52,23 @@ Rules:
 def build_agent(
     db_path: Path | str,
     vault_path: Path,
-    mcp_servers: list[MCPServer] | None = None,
+    mcp_servers: Sequence[MCPServer] | None = None,
     model: ModelLike = "openrouter/free",
     instructions: str = INSTRUCTIONS,
 ) -> Agent:
-    """Assemble the coordinator with handoffs and agents-as-tools."""
+    """Assemble the coordinator with handoffs and agents-as-tools.
+
+    `model` must already be a Model instance. On OpenRouter that means passing
+    build_model(config.model) rather than the raw slug: every OpenRouter slug
+    contains a '/', and the SDK's MultiProvider would read that as a provider
+    prefix and fail. Wrapping is the caller's job so this function stays a
+    pure assembler with no hidden client dependency.
+    """
     specs = build_specialists(db_path, vault_path, model=model)
 
-    # Sequence, not list: list is invariant, so list[MCPServerStdio] is not
-    # assignable to list[MCPServer]. Sequence is covariant, so it is.
-    servers: Sequence[MCPServer] = (
+    # Agent declares list[MCPServer]; list is invariant, so convert rather
+    # than assigning a Sequence directly.
+    servers: list[MCPServer] = list(
         mcp_servers if mcp_servers is not None else build_servers(vault_path)
     )
 
