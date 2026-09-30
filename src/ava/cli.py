@@ -153,6 +153,7 @@ async def _run(config) -> int:
     from agents.mcp import MCPServerManager
 
     from ava.db import connect
+    from ava.watcher import run_forever
 
     conn = connect(config.db_path)
     model = build_model(config.model)
@@ -169,6 +170,12 @@ async def _run(config) -> int:
 
     write_text(BANNER)
     write_diagnostic(f"Model: {config.model}")
+
+    # The watcher runs as a concurrent task. It takes a database path and
+    # resolves its own connection per call, because the tools run on worker
+    # threads and a sqlite3 connection is bound to its creating thread.
+    stop = asyncio.Event()
+    watcher_task = asyncio.create_task(run_forever(config.db_path, stop))
 
     # MCP servers are stdio subprocesses the caller must start and stop. The
     # SDK raises "Server not initialized" if a run starts them unconnected.
@@ -197,6 +204,8 @@ async def _run(config) -> int:
             except Exception as exc:  # keep the REPL alive on model errors
                 write_diagnostic(f"[error] {type(exc).__name__}: {exc}")
     finally:
+        stop.set()
+        watcher_task.cancel()
         await manager.cleanup_all()
 
     return 0

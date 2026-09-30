@@ -54,43 +54,43 @@ def notified(monkeypatch):
 
 
 async def test_check_once_fires_and_marks_done(tmp_path, notified):
-    conn = connect(tmp_path / "w.db")
+    conn = connect(db_path := tmp_path / "w.db")
     _insert_due(conn)
 
-    assert await watcher.check_once(conn) == 1
+    assert await watcher.check_once(db_path) == 1
     assert notified == ["Standup"]
     assert watcher.due_reminders(conn) == []
 
 
 async def test_check_once_does_not_refire(tmp_path, notified):
     """The important one: a reminder must not repeat every tick."""
-    conn = connect(tmp_path / "w.db")
+    conn = connect(db_path := tmp_path / "w.db")
     _insert_due(conn)
 
-    assert await watcher.check_once(conn) == 1
-    assert await watcher.check_once(conn) == 0
+    assert await watcher.check_once(db_path) == 1
+    assert await watcher.check_once(db_path) == 0
     assert notified == ["Standup"]
 
 
 async def test_check_once_ignores_future_reminders(tmp_path, notified):
-    conn = connect(tmp_path / "w.db")
+    conn = connect(db_path := tmp_path / "w.db")
     _insert_future(conn)
-    assert await watcher.check_once(conn) == 0
+    assert await watcher.check_once(db_path) == 0
     assert notified == []
 
 
 async def test_check_once_with_nothing_due(tmp_path, notified):
-    conn = connect(tmp_path / "w.db")
-    assert await watcher.check_once(conn) == 0
+    conn = connect(db_path := tmp_path / "w.db")
+    assert await watcher.check_once(db_path) == 0
 
 
 async def test_check_once_handles_several_due_reminders(tmp_path, notified):
-    conn = connect(tmp_path / "w.db")
+    conn = connect(db_path := tmp_path / "w.db")
     _insert_due(conn, "First", minutes_ago=30)
     _insert_due(conn, "Second", minutes_ago=20)
     _insert_due(conn, "Third", minutes_ago=10)
 
-    assert await watcher.check_once(conn) == 3
+    assert await watcher.check_once(db_path) == 3
     # Oldest first, so a backlog notifies in the order it built up.
     assert notified == ["First", "Second", "Third"]
 
@@ -98,19 +98,19 @@ async def test_check_once_handles_several_due_reminders(tmp_path, notified):
 async def test_check_once_still_marks_done_when_notify_fails(tmp_path, monkeypatch):
     """A failed notification must not leave the reminder firing forever."""
     monkeypatch.setattr(watcher.notifier, "notify", lambda t, m: False)
-    conn = connect(tmp_path / "w.db")
+    conn = connect(db_path := tmp_path / "w.db")
     _insert_due(conn)
 
-    assert await watcher.check_once(conn) == 1
+    assert await watcher.check_once(db_path) == 1
     assert watcher.due_reminders(conn) == []
 
 
 async def test_check_once_falls_back_to_printing(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(watcher.notifier, "notify", lambda t, m: False)
-    conn = connect(tmp_path / "w.db")
+    conn = connect(db_path := tmp_path / "w.db")
     _insert_due(conn)
 
-    await watcher.check_once(conn)
+    await watcher.check_once(db_path)
     assert "Standup" in capsys.readouterr().out
 
 
@@ -119,10 +119,10 @@ async def test_check_once_falls_back_to_printing(tmp_path, monkeypatch, capsys):
 
 async def test_run_forever_stops_on_event(tmp_path, monkeypatch, notified):
     monkeypatch.setattr(watcher, "POLL_SECONDS", 0.01)
-    conn = connect(tmp_path / "w.db")
+    conn = connect(db_path := tmp_path / "w.db")
 
     stop = asyncio.Event()
-    task = asyncio.create_task(watcher.run_forever(conn, stop))
+    task = asyncio.create_task(watcher.run_forever(db_path, stop))
     await asyncio.sleep(0.05)
     stop.set()
     await asyncio.wait_for(task, timeout=2)
@@ -131,10 +131,10 @@ async def test_run_forever_stops_on_event(tmp_path, monkeypatch, notified):
 async def test_run_forever_polls_repeatedly(tmp_path, monkeypatch, notified):
     """A reminder added while running must still be caught."""
     monkeypatch.setattr(watcher, "POLL_SECONDS", 0.01)
-    conn = connect(tmp_path / "w.db")
+    conn = connect(db_path := tmp_path / "w.db")
 
     stop = asyncio.Event()
-    task = asyncio.create_task(watcher.run_forever(conn, stop))
+    task = asyncio.create_task(watcher.run_forever(db_path, stop))
     await asyncio.sleep(0.03)
     _insert_due(conn)
     await asyncio.sleep(0.06)
@@ -147,21 +147,21 @@ async def test_run_forever_polls_repeatedly(tmp_path, monkeypatch, notified):
 async def test_run_forever_survives_a_check_error(tmp_path, monkeypatch):
     """One bad tick must not kill the watcher for the rest of the session."""
     monkeypatch.setattr(watcher, "POLL_SECONDS", 0.01)
-    conn = connect(tmp_path / "w.db")
+    conn = connect(db_path := tmp_path / "w.db")
 
     calls = {"n": 0}
     real_check = watcher.check_once
 
-    async def flaky(conn):
+    async def flaky(path):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("transient")
-        return await real_check(conn)
+        return await real_check(path)
 
     monkeypatch.setattr(watcher, "check_once", flaky)
 
     stop = asyncio.Event()
-    task = asyncio.create_task(watcher.run_forever(conn, stop))
+    task = asyncio.create_task(watcher.run_forever(db_path, stop))
     await asyncio.sleep(0.08)
     stop.set()
     await asyncio.wait_for(task, timeout=2)
