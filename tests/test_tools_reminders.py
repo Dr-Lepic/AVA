@@ -6,7 +6,6 @@ fires at 3pm is worse than no reminder, because the user stops trusting it.
 """
 
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 import pytest
 
@@ -48,10 +47,22 @@ def test_parse_due_t_iso_separator(monkeypatch):
     assert rem.parse_due("2026-10-01T09:00:00").hour == 3
 
 
-def test_parse_due_date_only_is_midnight_local(monkeypatch):
+def test_parse_due_rejects_date_only(monkeypatch):
+    """A bare date is ambiguous: 2026-10-01 could mean midnight or all day.
+
+    Rejecting it forces the model to state a time, which is safer than
+    silently guessing midnight and firing a day early.
+    """
     _tz(monkeypatch, "Asia/Dhaka")
-    utc = rem.parse_due("2026-10-01")
-    assert (utc.hour, utc.minute) == (0, 0)
+    with pytest.raises(rem.ReminderError, match="no time of day"):
+        rem.parse_due("2026-10-01")
+
+
+def test_parse_due_accepts_explicit_midnight(monkeypatch):
+    """The date-only guard must not reject a time the caller stated."""
+    _tz(monkeypatch, "Asia/Dhaka")
+    utc = rem.parse_due("2026-10-01T00:00:00")
+    assert utc.hour == 18  # previous day, 18:00 UTC
 
 
 def test_parse_due_rejects_garbage():
@@ -82,12 +93,17 @@ def test_parse_due_honours_western_timezone(monkeypatch):
 
 
 def test_parse_due_southern_hemisphere_dst(monkeypatch):
-    """Sydney is UTC+10 in January and UTC+11 in July."""
+    """Sydney is UTC+11 in January and UTC+10 in July — inverted vs the north.
+
+    Verified against zoneinfo: 09:00 local is 22:00 UTC the previous day in
+    January, and 23:00 UTC in July. Getting this backwards would be a
+    one-hour reminder error nobody would notice until it fired.
+    """
     _tz(monkeypatch, "Australia/Sydney")
     january = rem.parse_due("2026-01-15 09:00")
     july = rem.parse_due("2026-07-15 09:00")
-    assert january.hour == 23  # previous day, UTC
-    assert july.hour == 22
+    assert january.hour == 22  # previous day in UTC
+    assert july.hour == 23
 
 
 def test_bad_timezone_raises_friendly_error(monkeypatch):
@@ -99,9 +115,9 @@ def test_bad_timezone_raises_friendly_error(monkeypatch):
 # --- set_reminder --------------------------------------------------------
 
 
-def test_set_reminder_confirms_with_local_time(monkeypatch):
+def test_set_reminder_confirms_with_local_time(tmp_path, monkeypatch):
     _tz(monkeypatch, "Asia/Dhaka")
-    conn = connect(Path("/tmp/rem-t1.db"))
+    conn = connect(tmp_path / "rem.db")
     out = rem.set_reminder_impl(conn, "Standup", "2026-10-01 09:00")
     assert "Reminder #1 set: Standup" in out
     assert "2026-10-01 09:00" in out
@@ -123,10 +139,10 @@ def test_set_reminder_propagates_parse_error(tmp_path, monkeypatch):
     assert conn.execute("SELECT COUNT(*) FROM reminders").fetchone()[0] == 0
 
 
-def test_set_reminder_confirms_across_day_boundary(monkeypatch):
+def test_set_reminder_confirms_across_day_boundary(tmp_path, monkeypatch):
     """Dhaka 00:30 is the previous day in UTC — the echo must not mislead."""
     _tz(monkeypatch, "Asia/Dhaka")
-    conn = connect(Path("/tmp/rem-t2.db"))
+    conn = connect(tmp_path / "rem.db")
     out = rem.set_reminder_impl(conn, "Late", "2026-10-01 00:30")
     assert "2026-10-01 00:30" in out
 
