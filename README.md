@@ -23,6 +23,16 @@ today and supports tool calling:
 uv run python scripts/list_free_models.py
 ```
 
+**Free models fail more often than paid ones.** Two things to expect:
+
+- `503 provider_overloaded` — the free endpoint is busy. Wait a few seconds and
+  retry; it is not a configuration problem.
+- `429 rate limit` — you have used ~50 model requests for the day. A
+  delegated turn costs about 4 requests, so roughly 12 per day.
+
+If a specific free model is persistently overloaded, set `AVA_MODEL=openrouter/free`
+to let OpenRouter route to whichever free model is available.
+
 ## Safety limits
 
 - **Email drafts are never sent.** AVA writes `.eml` files to `~/.ava/vault` and
