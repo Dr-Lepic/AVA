@@ -25,8 +25,7 @@ SCHEDULING_TOOLS = {
 
 
 def _specs(tmp_path, model="test/model:free"):
-    conn = connect(tmp_path / "a.db")
-    return build_specialists(conn, tmp_path / "vault", model=model)
+    return build_specialists(tmp_path / "a.db", tmp_path / "vault", model=model)
 
 
 def _tools(agent):
@@ -138,8 +137,7 @@ def test_all_specialists_have_instructions(tmp_path):
 
 def test_build_specialists_creates_the_vault(tmp_path):
     vault = tmp_path / "nested" / "vault"
-    conn = connect(tmp_path / "a.db")
-    build_specialists(conn, vault, model="m")
+    build_specialists(tmp_path / "a.db", vault, model="m")
     assert vault.is_dir()
 
 
@@ -147,7 +145,7 @@ def test_specs_are_independent_objects(tmp_path):
     """Two builds must not share mutable tool state."""
     first = _specs(tmp_path)["notes"]
     second = build_specialists(
-        connect(tmp_path / "b.db"), tmp_path / "vault2", model="m"
+        tmp_path / "b.db", tmp_path / "vault2", model="m"
     )["notes"]
     assert first is not second
     assert first.tools[0] is not second.tools[0]
