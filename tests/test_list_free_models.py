@@ -88,10 +88,19 @@ def test_usable_excludes_free_models_without_tools(mod):
 def test_free_router_is_always_usable(mod):
     """openrouter/free only ever selects free models, so it always qualifies."""
     models = [
-        {"id": mod.FREE_ROUTER, "pricing": {"prompt": "0.01", "completion": "0.01"},
-         "supported_parameters": []},
+        {"id": mod.FREE_ROUTER, "pricing": {"prompt": "0", "completion": "0"},
+         "supported_parameters": [], "context_length": 200000},
     ]
     assert len(mod.select_usable(models)) == 1
+
+
+def test_free_router_qualifies_even_without_tool_params(mod):
+    """It reports no tool parameters but routes to models that have them."""
+    models = [
+        {"id": mod.FREE_ROUTER, "pricing": {"prompt": "0", "completion": "0"},
+         "supported_parameters": []},
+    ]
+    assert [m["id"] for m in mod.select_usable(models)] == [mod.FREE_ROUTER]
 
 
 def test_paid_models_are_never_usable(mod):
