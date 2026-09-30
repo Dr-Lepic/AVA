@@ -17,7 +17,7 @@ from pathlib import Path
 
 from agents.decorators import tool
 
-from ava.db import utc_now
+from ava.db import get_connection, utc_now, write
 
 # Characters that are illegal in filenames on at least one supported platform,
 # plus path separators, so a subject can never steer the write outside the vault.
@@ -41,11 +41,11 @@ def create_draft_impl(
     vault_path: Path | None = None,
 ) -> str:
     """Store an email draft. Does not send anything."""
-    conn.execute(
+    write(
+        conn,
         "INSERT INTO drafts (to_addr, subject, body, created_at) VALUES (?,?,?,?)",
         (to_addr, subject, body, utc_now()),
     )
-    conn.commit()
     draft_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
     if vault_path is not None:
@@ -78,24 +78,25 @@ def list_drafts_impl(conn: sqlite3.Connection, limit: int = 20) -> str:
     return json.dumps([dict(r) for r in rows], indent=2)
 
 
-def as_tools(conn: sqlite3.Connection, vault_path: Path) -> list:
-    """Bind the connection and vault, and return the two draft tools.
+def as_tools(db_path: Path | str, vault_path: Path) -> list:
+    """Bind the database path and vault, and return the two draft tools.
 
-    Both are closed over in wrapper functions: function_tool rejects
-    functools.partial, and the vault path must never be a model-supplied
-    argument — a model that chose where drafts are written could write
-    anywhere on disk.
+    The vault path is closed over: it must never be a model-supplied
+    argument, since a model that chose where drafts are written could write
+    anywhere on disk. The database path is likewise closed over, and the
+    connection is resolved per call, because the SDK runs tool functions on
+    worker threads and a sqlite3 connection is bound to its creating thread.
 
     strict_mode=False keeps `body` and `to_addr` genuinely optional.
     """
 
     def create_draft(subject: str, body: str = "", to_addr: str = "") -> str:
         """Write an email draft to the user's vault. This does NOT send mail."""
-        return create_draft_impl(conn, subject, body, to_addr, vault_path)
+        return create_draft_impl(get_connection(db_path), subject, body, to_addr, vault_path)
 
     def list_drafts(limit: int = 20) -> str:
         """List the user's recent email drafts, newest first. Never sends."""
-        return list_drafts_impl(conn, limit)
+        return list_drafts_impl(get_connection(db_path), limit)
 
     return [
         tool(create_draft, strict_mode=False),
