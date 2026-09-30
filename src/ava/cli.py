@@ -19,6 +19,7 @@ import sys
 from agents import Agent, Runner, SQLiteSession
 
 from ava.agent import build_agent
+from ava.commands import NEW_SESSION_PREFIX, Context, handle
 from ava.config import ConfigError, load_config
 from ava.llm import build_model, configure_llm
 from ava.mcp_servers import build_servers
@@ -165,6 +166,7 @@ async def _run(config) -> int:
         model=model,
     )
     session = SQLiteSession("ava-cli", db_path=str(config.db_path))
+    ctx = Context(agent=agent, conn=conn, model=config.model)
 
     _report_overdue(conn)
 
@@ -193,11 +195,28 @@ async def _run(config) -> int:
             line = line.strip()
             if not line:
                 continue
-            if line in {"/quit", "/exit"}:
-                break
+
+            # Slash commands bypass the model: instant, free, and
+            # deterministic. This matters on a 50/day request budget.
+            if line.startswith("/"):
+                try:
+                    out = handle(line, ctx)
+                except SystemExit:
+                    break
+                if out.startswith(NEW_SESSION_PREFIX):
+                    # A /new hands back a new session id; rebuild the session
+                    # so the next turn actually uses it.
+                    session = SQLiteSession(
+                        out[len(NEW_SESSION_PREFIX) :],
+                        db_path=str(config.db_path),
+                    )
+                    out = "Starting a fresh conversation."
+                write_diagnostic(out)
+                continue
 
             try:
                 calls, summary = await _respond(agent, session, line, None)
+                ctx.last_usage = summary
                 write_diagnostic(f"  [{summary}]")
             except KeyboardInterrupt:
                 write_text("\n[interrupted]")
