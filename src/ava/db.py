@@ -35,13 +35,17 @@ CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders (done, due_at);
 """
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
+def connect(db_path: Path | str) -> sqlite3.Connection:
     """Open a connection with row access by name and the schema applied.
 
     Safe to call on an existing database: the schema uses IF NOT EXISTS, so
-    reopening preserves existing rows.
+    reopening preserves existing rows. Accepts a str for convenience and
+    creates the parent directory if missing, so a first run against a fresh
+    AVA_HOME cannot fail here.
     """
-    conn = sqlite3.connect(db_path)
+    path = Path(db_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)

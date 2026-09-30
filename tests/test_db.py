@@ -67,6 +67,20 @@ def test_defaults_applied_on_insert(tmp_path):
     assert reminder["done"] == 0
 
 
+def test_connect_creates_missing_parent_dir(tmp_path):
+    """A first run against a fresh AVA_HOME must not fail here."""
+    deep = tmp_path / "a" / "b" / "c" / "test.db"
+    conn = connect(deep)
+    assert deep.is_file()
+    assert EXPECTED_TABLES <= _table_names(conn)
+
+
+def test_connect_accepts_str_path(tmp_path):
+    """sqlite3 accepts str paths, so connect() must too."""
+    conn = connect(str(tmp_path / "as-str.db"))
+    assert EXPECTED_TABLES <= _table_names(conn)
+
+
 def test_ids_autoincrement(tmp_path):
     conn = connect(tmp_path / "ids.db")
     for i in range(3):
