@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 
 from agents.decorators import tool
 
-from ava.db import utc_now
+from ava.db import get_connection, utc_now, write
 
 
 def _like_pattern(query: str) -> str:
@@ -32,11 +33,11 @@ def _like_pattern(query: str) -> str:
 def save_note_impl(
     conn: sqlite3.Connection, title: str, body: str = "", tags: str = ""
 ) -> str:
-    conn.execute(
+    write(
+        conn,
         "INSERT INTO notes (title, body, tags, created_at) VALUES (?, ?, ?, ?)",
         (title, body, tags, utc_now()),
     )
-    conn.commit()
     note_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     return f"Saved note #{note_id}: {title}"
 
@@ -71,8 +72,8 @@ def search_notes_impl(conn: sqlite3.Connection, query: str) -> str:
     return json.dumps([dict(r) for r in rows], indent=2)
 
 
-def as_tools(conn: sqlite3.Connection) -> list:
-    """Bind the connection and return the three note tools.
+def as_tools(db_path: Path | str) -> list:
+    """Bind the database path and return the three note tools.
 
     Two things the SDK forces here, both found by tests/test_tools_notes_schema.py:
 
@@ -89,15 +90,15 @@ def as_tools(conn: sqlite3.Connection) -> list:
 
     def save_note(title: str, body: str = "", tags: str = "") -> str:
         """Save a note for the user. Use when they state something worth keeping."""
-        return save_note_impl(conn, title, body, tags)
+        return save_note_impl(get_connection(db_path), title, body, tags)
 
     def list_notes(limit: int = 20) -> str:
         """List the user's most recent notes, newest first."""
-        return list_notes_impl(conn, limit)
+        return list_notes_impl(get_connection(db_path), limit)
 
     def search_notes(query: str) -> str:
         """Search notes by keyword across titles and bodies."""
-        return search_notes_impl(conn, query)
+        return search_notes_impl(get_connection(db_path), query)
 
     return [
         tool(save_note, strict_mode=False),

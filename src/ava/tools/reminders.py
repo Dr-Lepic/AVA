@@ -9,13 +9,14 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from agents.decorators import tool
 
 from ava.config import DEFAULT_TZ
-from ava.db import utc_now
+from ava.db import delete, get_connection, utc_now, write
 
 
 class ReminderError(ValueError):
@@ -78,11 +79,11 @@ def set_reminder_impl(conn: sqlite3.Connection, title: str, due: str) -> str:
     tz = _local_tz()
     due_utc = parse_due(due)
 
-    conn.execute(
+    write(
+        conn,
         "INSERT INTO reminders (title, due_at, created_at) VALUES (?,?,?)",
         (title, due_utc.isoformat(), utc_now()),
     )
-    conn.commit()
     rem_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
     return (
@@ -103,8 +104,7 @@ def list_reminders_impl(conn: sqlite3.Connection, include_done: bool = False) ->
 
 
 def cancel_reminder_impl(conn: sqlite3.Connection, reminder_id: int) -> str:
-    cursor = conn.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
-    conn.commit()
+    cursor = delete(conn, "DELETE FROM reminders WHERE id = ?", (reminder_id,))
     if cursor.rowcount == 0:
         return f"No reminder with id {reminder_id}."
     return f"Reminder #{reminder_id} cancelled."
@@ -121,11 +121,11 @@ def snooze_reminder_impl(
         return f"No reminder with id {reminder_id}."
 
     new_due = datetime.fromisoformat(row["due_at"]) + timedelta(minutes=minutes)
-    conn.execute(
+    write(
+        conn,
         "UPDATE reminders SET due_at = ? WHERE id = ?",
         (new_due.isoformat(), reminder_id),
     )
-    conn.commit()
 
     return (
         f"Reminder #{reminder_id} ({row['title']}) snoozed by {minutes} min, "
@@ -148,32 +148,32 @@ def due_reminders(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def mark_done(conn: sqlite3.Connection, reminder_id: int) -> None:
-    conn.execute("UPDATE reminders SET done = 1 WHERE id = ?", (reminder_id,))
-    conn.commit()
+    write(conn, "UPDATE reminders SET done = 1 WHERE id = ?", (reminder_id,))
 
 
-def as_tools(conn: sqlite3.Connection) -> list:
-    """Bind the connection and return the four reminder tools.
+def as_tools(db_path: Path | str) -> list:
+    """Bind the database path and return the four reminder tools.
 
-    The connection is closed over rather than bound: function_tool rejects
-    functools.partial, and a `conn` argument must never reach the model.
+    The connection is resolved per call via get_connection, because the SDK
+    invokes tool functions on worker threads and a sqlite3 connection is
+    bound to its creating thread. It is never a model-supplied argument.
     """
 
     def set_reminder(title: str, due: str) -> str:
         """Set a reminder. `due` is local time as ISO-8601, e.g. 2026-10-01T09:00:00."""
-        return set_reminder_impl(conn, title, due)
+        return set_reminder_impl(get_connection(db_path), title, due)
 
     def list_reminders(include_done: bool = False) -> str:
         """List reminders the user has set, earliest first."""
-        return list_reminders_impl(conn, include_done)
+        return list_reminders_impl(get_connection(db_path), include_done)
 
     def cancel_reminder(reminder_id: int) -> str:
         """Delete a reminder by its numeric id. Use list_reminders to find ids."""
-        return cancel_reminder_impl(conn, reminder_id)
+        return cancel_reminder_impl(get_connection(db_path), reminder_id)
 
     def snooze_reminder(reminder_id: int, minutes: int) -> str:
         """Delay an existing reminder by a number of minutes, by numeric id."""
-        return snooze_reminder_impl(conn, reminder_id, minutes)
+        return snooze_reminder_impl(get_connection(db_path), reminder_id, minutes)
 
     return [
         tool(set_reminder, strict_mode=False),
