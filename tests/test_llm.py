@@ -62,11 +62,18 @@ def test_configure_preserves_key(config):
 
 
 def test_configure_disables_tracing(config):
-    """Traces upload to OpenAI; with no OpenAI key every run would 401."""
+    """Traces upload to OpenAI; with no OpenAI key every run would 401.
+
+    The provider derives its disabled flag from _manual_disabled plus the
+    OPENAI_AGENTS_DISABLE_TRACING env var, so the manual flag is what
+    configure_llm sets and what this asserts.
+    """
     from agents.tracing import get_trace_provider
 
     configure_llm(config)
-    assert get_trace_provider().is_disabled() is True
+    provider = get_trace_provider()
+    provider._refresh_disabled_flag()
+    assert provider._disabled is True
 
 
 def test_client_is_not_used_for_tracing(config):
