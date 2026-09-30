@@ -19,6 +19,7 @@ import sys
 from agents import Agent, Runner, SQLiteSession
 
 from ava.agent import build_agent
+from ava.budget import Budget
 from ava.commands import NEW_SESSION_PREFIX, Context, handle
 from ava.config import ConfigError, load_config
 from ava.llm import build_model, configure_llm
@@ -167,11 +168,13 @@ async def _run(config) -> int:
     )
     session = SQLiteSession("ava-cli", db_path=str(config.db_path))
     ctx = Context(agent=agent, conn=conn, model=config.model)
+    budget = Budget(config.state_path)
 
     _report_overdue(conn)
 
     write_text(BANNER)
     write_diagnostic(f"Model: {config.model}")
+    write_diagnostic(budget.summary())
 
     # The watcher runs as a concurrent task. It takes a database path and
     # resolves its own connection per call, because the tools run on worker
@@ -211,13 +214,29 @@ async def _run(config) -> int:
                         db_path=str(config.db_path),
                     )
                     out = "Starting a fresh conversation."
+                if line.lower() == "/usage":
+                    out = f"{out}\n{budget.summary()}"
                 write_diagnostic(out)
+                continue
+
+            # Slash commands are free, so only a real turn is charged.
+            if budget.is_exhausted():
+                write_diagnostic(
+                    "Daily free limit reached — message not sent. "
+                    "Slash commands still work; try /model openrouter/free."
+                )
                 continue
 
             try:
                 calls, summary = await _respond(agent, session, line, None)
+                # Charge the REAL number of model calls this turn made. A
+                # delegated turn is ~4, not 1, and undercounting would let the
+                # day's budget disappear without a warning.
+                budget.record(calls)
                 ctx.last_usage = summary
                 write_diagnostic(f"  [{summary}]")
+                if budget.should_warn():
+                    write_diagnostic(f"  [quota] {budget.summary()}")
             except KeyboardInterrupt:
                 write_text("\n[interrupted]")
             except Exception as exc:  # keep the REPL alive on model errors
