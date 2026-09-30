@@ -27,12 +27,12 @@ def test_server_is_named_filesystem(tmp_path):
 def test_server_uses_npx(tmp_path):
     """Launching via npx means no separate install step for the user."""
     params = build_servers(tmp_path / "vault")[0].params
-    assert params["command"] == "npx"
+    assert params.command == "npx"
 
 
 def test_server_pins_the_published_package(tmp_path):
     """An unpinned npx fetch is a supply-chain risk on every launch."""
-    args = build_servers(tmp_path / "vault")[0].params["args"]
+    args = build_servers(tmp_path / "vault")[0].params.args
     assert args[0] == "-y"
     assert args[1] == NPM_PACKAGE
 
@@ -40,14 +40,14 @@ def test_server_pins_the_published_package(tmp_path):
 def test_server_is_scoped_to_the_vault(tmp_path):
     """The vault path is the last argv element, which bounds what it can touch."""
     vault = tmp_path / "vault"
-    args = build_servers(vault)[0].params["args"]
+    args = build_servers(vault)[0].params.args
     assert args[-1] == str(vault)
 
 
 def test_server_is_scoped_to_exactly_one_directory(tmp_path):
     """Extra paths would widen the sandbox; assert only the vault is passed."""
     vault = tmp_path / "vault"
-    args = build_servers(vault)[0].params["args"]
+    args = build_servers(vault)[0].params.args
     assert len(args) == 3
     assert str(vault.parent) not in args
 
@@ -73,4 +73,7 @@ def test_build_servers_is_repeatable(tmp_path):
 
 def test_hosted_mcp_is_documented_as_unavailable():
     """Guard against someone reaching for HostedMCPTool on the OpenRouter path."""
-    assert "chat_completions" in MODELS_NOTE.lower()
+    note = MODELS_NOTE.lower()
+    assert "chat completions" in note
+    assert "hostedmcptool" in note
+    assert "responses-only" in note
