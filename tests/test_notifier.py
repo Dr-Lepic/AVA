@@ -115,15 +115,18 @@ def test_notify_includes_title_and_message(on_macos, fake_run):
 
 def test_notify_passes_script_via_dash_e(on_macos, fake_run):
     """The script must be an argv element, never interpolated into a shell string."""
+    notifier.notify("AVA", "body")
     assert fake_run.calls[0].args[1] == "-e"
 
 
 def test_notify_uses_check_true(on_macos, fake_run):
+    notifier.notify("AVA", "body")
     assert fake_run.calls[0].kwargs["check"] is True
 
 
 def test_notify_has_a_timeout(on_macos, fake_run):
     """A hung osascript must not wedge the reminder watcher forever."""
+    notifier.notify("AVA", "body")
     assert fake_run.calls[0].kwargs["timeout"] == 5
 
 
