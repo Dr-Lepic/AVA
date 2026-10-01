@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
@@ -21,6 +22,14 @@ from ava.db import delete, get_connection, utc_now, write
 
 class ReminderError(ValueError):
     """Raised when a due date cannot be parsed or a timezone is invalid."""
+
+
+class PastDueError(ReminderError):
+    """Raised when a reminder resolves to a time that has already passed.
+
+    Separate from ReminderError because the message should tell the model what
+    the real current time is, so it can retry instead of guessing again.
+    """
 
 
 def _local_tz(tz_name: str | None = None) -> ZoneInfo:
@@ -37,6 +46,83 @@ def _local_tz(tz_name: str | None = None) -> ZoneInfo:
         ) from exc
 
 
+# Relative phrases are resolved here rather than by the model. The model has
+# no clock: asked for "tomorrow" it computes from its training data, which may
+# be years stale, and the reminder lands in the past.
+_UNITS = {
+    "second": "seconds", "seconds": "seconds", "sec": "seconds", "s": "seconds",
+    "minute": "minutes", "minutes": "minutes", "min": "minutes", "m": "minutes",
+    "hour": "hours", "hours": "hours", "hr": "hours", "h": "hours",
+    "day": "days", "days": "days", "d": "days",
+    "week": "weeks", "weeks": "weeks", "w": "weeks",
+}
+
+_IN_RE = re.compile(r"^in\s+(\d+)\s+([a-z]+)$")
+
+
+def _parse_clock(remainder: str) -> tuple[int, int] | None:
+    """Pull an hour and minute out of '9am', '9:30pm', '21:00', or '9'.
+
+    Handles a space before the meridiem ("3:30 pm") by removing spaces first.
+    """
+    text = remainder.strip().rstrip(".").replace(" ", "").lower()
+    if not text:
+        return None
+
+    meridiem = None
+    for suffix in ("am", "pm"):
+        if text.endswith(suffix):
+            meridiem = suffix
+            text = text[: -len(suffix)]
+            break
+
+    if ":" in text:
+        head, _, tail = text.partition(":")
+        if not head.isdigit() or not tail.isdigit():
+            return None
+        hour, minute = int(head), int(tail)
+    elif text.isdigit():
+        hour, minute = int(text), 0
+    else:
+        return None
+
+    if meridiem == "pm" and hour < 12:
+        hour += 12
+    elif meridiem == "am" and hour == 12:
+        hour = 0
+    return hour % 24, minute % 60
+
+
+def parse_relative(text: str, tz_name: str | None = None) -> datetime | None:
+    """Resolve 'in 20 minutes' against the real clock.
+
+    Returns None when the text is not a relative phrase, so the caller can
+    fall through to absolute parsing rather than guessing.
+    """
+    match = _IN_RE.match(text.strip().lower())
+    if not match:
+        return None
+    key = _UNITS.get(match.group(2))
+    if key is None:
+        return None
+    return datetime.now(_local_tz(tz_name)) + timedelta(**{key: int(match.group(1))})
+
+
+def parse_today_word(text: str, tz_name: str | None = None) -> datetime | None:
+    """Resolve 'today 9am' / 'tomorrow 9am' / 'day after tomorrow 9am'."""
+    lowered = text.strip().lower()
+    for word, offset in (("day after tomorrow", 2), ("tomorrow", 1), ("today", 0)):
+        if lowered.startswith(word):
+            clock = _parse_clock(lowered[len(word) :])
+            if clock is None:
+                return None
+            base = datetime.now(_local_tz(tz_name)) + timedelta(days=offset)
+            return base.replace(
+                hour=clock[0], minute=clock[1], second=0, microsecond=0
+            )
+    return None
+
+
 def _format_local(moment_utc: datetime, tz: ZoneInfo) -> str:
     """Render a UTC instant in the user's zone, for echoing back to them."""
     return moment_utc.astimezone(tz).strftime("%Y-%m-%d %H:%M")
@@ -45,20 +131,34 @@ def _format_local(moment_utc: datetime, tz: ZoneInfo) -> str:
 def parse_due(due: str, tz_name: str | None = None) -> datetime:
     """Parse a due time into an absolute UTC datetime.
 
-    Accepts ISO-8601 with a time component. A naive value
-    ('2026-10-01 09:00') is interpreted in the user's configured timezone, so
-    "9am" means 9am where they are.
+    Three forms are accepted, tried in order:
 
-    A date with no time ('2026-10-01') is rejected: it is ambiguous between
-    midnight and all-day, and guessing midnight would fire a day early.
+    1. a relative phrase — "in 20 minutes"
+    2. a day word — "tomorrow 9am", "today 15:30"
+    3. absolute ISO-8601 — "2026-10-01T09:00:00"
+
+    The first two are resolved against the real clock. This is the point:
+    the model has no clock, so a "tomorrow" it computes itself lands in the
+    past. It should pass the user's words through untouched instead.
+
+    A naive absolute value is read in the user's configured timezone. A value
+    that has already passed is refused — see set_reminder_impl.
     """
     text = due.strip()
+
+    resolved = parse_relative(text, tz_name)
+    if resolved is None:
+        resolved = parse_today_word(text, tz_name)
+    if resolved is not None:
+        return resolved.astimezone(timezone.utc)
+
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError as exc:
         raise ReminderError(
-            f"Could not parse due time {due!r}. Use ISO-8601 with a time, e.g. "
-            "'2026-10-01T09:00:00' or '2026-10-01 09:00' (local time)."
+            f"Could not parse due time {due!r}. Use a relative phrase like "
+            "'in 20 minutes' or 'tomorrow 9am', or ISO-8601 like "
+            "'2026-10-01 09:00'."
         ) from exc
 
     # datetime.fromisoformat accepts a bare date, yielding midnight. Reject it
@@ -77,7 +177,20 @@ def parse_due(due: str, tz_name: str | None = None) -> datetime:
 
 def set_reminder_impl(conn: sqlite3.Connection, title: str, due: str) -> str:
     tz = _local_tz()
+    now = datetime.now(tz)
     due_utc = parse_due(due)
+
+    # Safety net. The relative and day-word forms above handle the common
+    # cases, but the model can still pass an absolute date computed from a
+    # stale idea of what today is. Such a reminder is due immediately and
+    # fires on the next poll, so refuse it and tell the model the real time.
+    if due_utc <= now.astimezone(timezone.utc):
+        raise PastDueError(
+            f"{due_utc.astimezone(tz):%Y-%m-%d %H:%M} is in the past. "
+            f"The current time is {now:%Y-%m-%d %H:%M}. "
+            f"Pass a relative phrase like 'in 20 minutes' or 'tomorrow 9am', "
+            f"or an ISO-8601 date in the future."
+        )
 
     write(
         conn,

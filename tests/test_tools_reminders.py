@@ -12,8 +12,8 @@ import pytest
 from ava.db import connect
 from ava.tools import reminders as rem
 
-# 2026-10-01T09:00 in Asia/Dhaka (UTC+6, no DST) is 03:00 UTC.
-DHAKA_9AM_UTC = "2026-10-01T03:00:00+00:00"
+# 2027-10-01T09:00 in Asia/Dhaka (UTC+6, no DST) is 03:00 UTC.
+DHAKA_9AM_UTC = "2027-10-01T03:00:00+00:00"
 
 
 def _tz(monkeypatch, name):
@@ -25,43 +25,43 @@ def _tz(monkeypatch, name):
 
 def test_parse_due_interprets_naive_as_local(monkeypatch):
     _tz(monkeypatch, "Asia/Dhaka")
-    utc = rem.parse_due("2026-10-01 09:00")
+    utc = rem.parse_due("2027-10-01 09:00")
     assert utc.tzinfo == timezone.utc
     assert utc.hour == 3
 
 
 def test_parse_due_respects_explicit_offset():
-    utc = rem.parse_due("2026-10-01T09:00:00+00:00")
+    utc = rem.parse_due("2027-10-01T09:00:00+00:00")
     assert utc.hour == 9
     assert utc.tzinfo == timezone.utc
 
 
 def test_parse_due_converts_other_offset_to_utc():
-    utc = rem.parse_due("2026-10-01T09:00:00+06:00")
+    utc = rem.parse_due("2027-10-01T09:00:00+06:00")
     assert utc.hour == 3
     assert utc.tzinfo == timezone.utc
 
 
 def test_parse_due_t_iso_separator(monkeypatch):
     _tz(monkeypatch, "Asia/Dhaka")
-    assert rem.parse_due("2026-10-01T09:00:00").hour == 3
+    assert rem.parse_due("2027-10-01T09:00:00").hour == 3
 
 
 def test_parse_due_rejects_date_only(monkeypatch):
-    """A bare date is ambiguous: 2026-10-01 could mean midnight or all day.
+    """A bare date is ambiguous: 2027-10-01 could mean midnight or all day.
 
     Rejecting it forces the model to state a time, which is safer than
     silently guessing midnight and firing a day early.
     """
     _tz(monkeypatch, "Asia/Dhaka")
     with pytest.raises(rem.ReminderError, match="no time of day"):
-        rem.parse_due("2026-10-01")
+        rem.parse_due("2027-10-01")
 
 
 def test_parse_due_accepts_explicit_midnight(monkeypatch):
     """The date-only guard must not reject a time the caller stated."""
     _tz(monkeypatch, "Asia/Dhaka")
-    utc = rem.parse_due("2026-10-01T00:00:00")
+    utc = rem.parse_due("2027-10-01T00:00:00")
     assert utc.hour == 18  # previous day, 18:00 UTC
 
 
@@ -83,13 +83,13 @@ def test_parse_due_error_names_the_offending_value():
 def test_parse_due_uses_configured_timezone(monkeypatch):
     """A UTC-configured user reading 09:00 must get 09:00, not 03:00."""
     _tz(monkeypatch, "UTC")
-    assert rem.parse_due("2026-10-01 09:00").hour == 9
+    assert rem.parse_due("2027-10-01 09:00").hour == 9
 
 
 def test_parse_due_honours_western_timezone(monkeypatch):
     _tz(monkeypatch, "America/New_York")
     # 09:00 EDT (UTC-4) is 13:00 UTC
-    assert rem.parse_due("2026-10-01 09:00").hour == 13
+    assert rem.parse_due("2027-10-01 09:00").hour == 13
 
 
 def test_parse_due_southern_hemisphere_dst(monkeypatch):
@@ -109,7 +109,7 @@ def test_parse_due_southern_hemisphere_dst(monkeypatch):
 def test_bad_timezone_raises_friendly_error(monkeypatch):
     _tz(monkeypatch, "Mars/Olympus_Mons")
     with pytest.raises(rem.ReminderError, match="timezone"):
-        rem.parse_due("2026-10-01 09:00")
+        rem.parse_due("2027-10-01 09:00")
 
 
 # --- set_reminder --------------------------------------------------------
@@ -118,15 +118,15 @@ def test_bad_timezone_raises_friendly_error(monkeypatch):
 def test_set_reminder_confirms_with_local_time(tmp_path, monkeypatch):
     _tz(monkeypatch, "Asia/Dhaka")
     conn = connect(tmp_path / "rem.db")
-    out = rem.set_reminder_impl(conn, "Standup", "2026-10-01 09:00")
+    out = rem.set_reminder_impl(conn, "Standup", "2027-10-01 09:00")
     assert "Reminder #1 set: Standup" in out
-    assert "2026-10-01 09:00" in out
+    assert "2027-10-01 09:00" in out
 
 
 def test_set_reminder_stores_utc(tmp_path, monkeypatch):
     _tz(monkeypatch, "Asia/Dhaka")
     conn = connect(tmp_path / "r.db")
-    rem.set_reminder_impl(conn, "Standup", "2026-10-01 09:00")
+    rem.set_reminder_impl(conn, "Standup", "2027-10-01 09:00")
     stored = conn.execute("SELECT due_at FROM reminders").fetchone()["due_at"]
     assert datetime.fromisoformat(stored) == datetime.fromisoformat(DHAKA_9AM_UTC)
 
@@ -143,8 +143,8 @@ def test_set_reminder_confirms_across_day_boundary(tmp_path, monkeypatch):
     """Dhaka 00:30 is the previous day in UTC — the echo must not mislead."""
     _tz(monkeypatch, "Asia/Dhaka")
     conn = connect(tmp_path / "rem.db")
-    out = rem.set_reminder_impl(conn, "Late", "2026-10-01 00:30")
-    assert "2026-10-01 00:30" in out
+    out = rem.set_reminder_impl(conn, "Late", "2027-10-01 00:30")
+    assert "2027-10-01 00:30" in out
 
 
 # --- list / cancel -------------------------------------------------------
@@ -158,16 +158,16 @@ def test_list_reminders_empty(tmp_path):
 def test_list_reminders_earliest_first(tmp_path, monkeypatch):
     _tz(monkeypatch, "Asia/Dhaka")
     conn = connect(tmp_path / "r.db")
-    rem.set_reminder_impl(conn, "later", "2026-10-02 09:00")
-    rem.set_reminder_impl(conn, "sooner", "2026-10-01 09:00")
+    rem.set_reminder_impl(conn, "later", "2027-10-02 09:00")
+    rem.set_reminder_impl(conn, "sooner", "2027-10-01 09:00")
     assert rem.list_reminders_impl(conn).index("sooner") < rem.list_reminders_impl(conn).index("later")
 
 
 def test_list_reminders_hides_done_by_default(tmp_path, monkeypatch):
     _tz(monkeypatch, "Asia/Dhaka")
     conn = connect(tmp_path / "r.db")
-    rem.set_reminder_impl(conn, "pending", "2026-10-02 09:00")
-    rem.set_reminder_impl(conn, "finished", "2026-10-03 09:00")
+    rem.set_reminder_impl(conn, "pending", "2027-10-02 09:00")
+    rem.set_reminder_impl(conn, "finished", "2027-10-03 09:00")
     conn.execute("UPDATE reminders SET done = 1 WHERE title = 'finished'")
     conn.commit()
     assert "finished" not in rem.list_reminders_impl(conn)
@@ -176,7 +176,7 @@ def test_list_reminders_hides_done_by_default(tmp_path, monkeypatch):
 def test_list_reminders_includes_done_on_request(tmp_path, monkeypatch):
     _tz(monkeypatch, "Asia/Dhaka")
     conn = connect(tmp_path / "r.db")
-    rem.set_reminder_impl(conn, "finished", "2026-10-03 09:00")
+    rem.set_reminder_impl(conn, "finished", "2027-10-03 09:00")
     conn.execute("UPDATE reminders SET done = 1")
     conn.commit()
     assert "finished" in rem.list_reminders_impl(conn, include_done=True)
@@ -190,7 +190,7 @@ def test_cancel_reminder_missing_id(tmp_path):
 def test_cancel_reminder_deletes(tmp_path, monkeypatch):
     _tz(monkeypatch, "Asia/Dhaka")
     conn = connect(tmp_path / "r.db")
-    rem.set_reminder_impl(conn, "X", "2026-10-01 09:00")
+    rem.set_reminder_impl(conn, "X", "2027-10-01 09:00")
     assert "cancelled" in rem.cancel_reminder_impl(conn, 1)
     assert "No reminders" in rem.list_reminders_impl(conn)
 
@@ -257,7 +257,7 @@ def test_due_reminders_oldest_first(tmp_path):
 def test_snooze_pushes_due_time_forward(tmp_path, monkeypatch):
     _tz(monkeypatch, "Asia/Dhaka")
     conn = connect(tmp_path / "s.db")
-    rem.set_reminder_impl(conn, "Water plants", "2026-10-01 09:00")
+    rem.set_reminder_impl(conn, "Water plants", "2027-10-01 09:00")
     before = datetime.fromisoformat(
         conn.execute("SELECT due_at FROM reminders WHERE id=1").fetchone()["due_at"]
     )
@@ -279,7 +279,7 @@ def test_snooze_missing_id(tmp_path):
 def test_snooze_does_not_create_new_rows(tmp_path, monkeypatch):
     _tz(monkeypatch, "Asia/Dhaka")
     conn = connect(tmp_path / "s.db")
-    rem.set_reminder_impl(conn, "X", "2026-10-01 09:00")
+    rem.set_reminder_impl(conn, "X", "2027-10-01 09:00")
     rem.snooze_reminder_impl(conn, 1, 10)
     assert conn.execute("SELECT COUNT(*) FROM reminders").fetchone()[0] == 1
 
@@ -287,6 +287,6 @@ def test_snooze_does_not_create_new_rows(tmp_path, monkeypatch):
 def test_snooze_across_day_boundary(tmp_path, monkeypatch):
     _tz(monkeypatch, "Asia/Dhaka")
     conn = connect(tmp_path / "s.db")
-    rem.set_reminder_impl(conn, "Late", "2026-10-01 23:30")
+    rem.set_reminder_impl(conn, "Late", "2027-10-01 23:30")
     out = rem.snooze_reminder_impl(conn, 1, 60)
-    assert "2026-10-02 00:30" in out
+    assert "2027-10-02 00:30" in out

@@ -8,6 +8,9 @@ dependencies = [
     "mcp>=1.19.0,<3",
 ]
 
+[project.scripts]
+ava = "ava.cli:main"
+
 # Install ava itself in editable mode so `import ava` works from any script,
 # not only under pytest (which injects pythonpath=["src"]).
 [build-system]

@@ -55,6 +55,7 @@ def build_agent(
     mcp_servers: Sequence[MCPServer] | None = None,
     model: ModelLike = "openrouter/free",
     instructions: str = INSTRUCTIONS,
+    tz_name: str | None = None,
 ) -> Agent:
     """Assemble the coordinator with handoffs and agents-as-tools.
 
@@ -64,7 +65,7 @@ def build_agent(
     prefix and fail. Wrapping is the caller's job so this function stays a
     pure assembler with no hidden client dependency.
     """
-    specs = build_specialists(db_path, vault_path, model=model)
+    specs = build_specialists(db_path, vault_path, model=model, tz_name=tz_name)
 
     # Agent declares list[MCPServer]; list is invariant, so convert rather
     # than assigning a Sequence directly.
