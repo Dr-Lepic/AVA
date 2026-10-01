@@ -153,7 +153,7 @@ async def test_coordinator_answers_trivial_chat_without_a_tool(tmp_path):
 async def test_scheduling_specialist_does_timezone_math(tmp_path):
     """Handoff path: the specialist's tool does the timezone work itself."""
     model = ScriptedModel([
-        [function_call("set_reminder", {"title": "Standup", "due": "2026-10-01 09:00"}, call_id="c1")],
+        [function_call("set_reminder", {"title": "Standup", "due": "2027-10-01 09:00"}, call_id="c1")],
         [assistant_message("Set.")],
     ])
     scheduling = build_specialists(
@@ -165,5 +165,5 @@ async def test_scheduling_specialist_does_timezone_math(tmp_path):
     assert result.final_output == "Set."
     conn = connect(tmp_path / "a.db")
     row = conn.execute("SELECT title, due_at FROM reminders").fetchone()
-    assert row["due_at"].startswith("2026-10-01T03:00")
+    assert row["due_at"].startswith("2027-10-01T03:00")
     model.assert_complete()

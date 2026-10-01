@@ -15,6 +15,8 @@ from typing import Union
 
 from agents import Agent, Model
 
+from ava.clock import current_time_block
+from ava.config import DEFAULT_TZ
 from ava.tools import drafts, notes, reminders
 
 # A specialist takes whatever the SDK's `model` accepts: a slug string in
@@ -41,11 +43,15 @@ You write email drafts for AVA, a personal assistant.
 SCHEDULING_INSTRUCTIONS = """\
 You manage reminders for AVA, a personal assistant.
 
-- Convert relative times ("tomorrow 9am", "in 20 minutes") to an explicit
-  local ISO-8601 time before calling set_reminder. The naive time is read in
-  the user's configured timezone, so "09:00" means 9am their time.
+- Pass the user's time wording straight through: "in 20 minutes", "tomorrow
+  9am", "today 15:00". The tools resolve it against the real clock, so do
+  not convert it to a date yourself — you have no clock and will get it wrong.
+- Naive times you do pass as ISO-8601 are read in the user's configured
+  timezone, so "09:00" means 9am their time.
 - Always echo the resolved local time back so the user can catch a mistake.
 - To snooze or cancel you need the numeric id — call list_reminders first.
+- If a due time is rejected as being in the past, that means your date was
+  wrong. Use the current time below, or pass a relative phrase instead.
 """
 
 
@@ -53,6 +59,7 @@ def build_specialists(
     db_path: Path | str,
     vault_path: Path,
     model: ModelLike,
+    tz_name: str | None = None,
 ) -> dict[str, Agent]:
     """Build the three domain specialists, keyed by short name.
 
@@ -64,6 +71,9 @@ def build_specialists(
     specialist by reading it, so it must state the domain plainly.
     """
     vault_path.mkdir(parents=True, exist_ok=True)
+    scheduling_instructions = SCHEDULING_INSTRUCTIONS + "\n" + current_time_block(
+        tz_name or DEFAULT_TZ
+    )
 
     return {
         "notes": Agent(
@@ -83,7 +93,7 @@ def build_specialists(
         "scheduling": Agent(
             name="Scheduling",
             handoff_description="Sets, lists, snoozes, and cancels the user's reminders.",
-            instructions=SCHEDULING_INSTRUCTIONS,
+            instructions=scheduling_instructions,
             model=model,
             tools=reminders.as_tools(db_path),
         ),

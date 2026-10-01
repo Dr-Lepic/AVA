@@ -165,6 +165,7 @@ async def _run(config) -> int:
         config.vault_path,
         mcp_servers=servers,
         model=model,
+        tz_name=config.tz,
     )
     session = SQLiteSession("ava-cli", db_path=str(config.db_path))
     ctx = Context(agent=agent, conn=conn, model=config.model)

@@ -41,21 +41,25 @@ def _local_now():
 
 
 def test_in_20_minutes_resolves_forward():
+    """The window allows for clock drift between the two now() calls."""
     now = _local_now()
     resolved = parse_relative("in 20 minutes", TZ)
     delta = resolved - now
-    assert timedelta(minutes=19) < delta <= timedelta(minutes=20)
+    assert timedelta(minutes=19, seconds=59) < delta <= timedelta(minutes=20, seconds=1)
 
 
 def test_in_hours_and_days():
     now = _local_now()
-    assert timedelta(hours=1, minutes=59) < (parse_relative("in 2 hours", TZ) - now) <= timedelta(hours=2)
-    assert timedelta(days=6, hours=23) < (parse_relative("in 1 week", TZ) - now) <= timedelta(days=7)
+    two_hours = parse_relative("in 2 hours", TZ) - now
+    one_week = parse_relative("in 1 week", TZ) - now
+    assert timedelta(hours=2) - timedelta(seconds=1) < two_hours <= timedelta(hours=2) + timedelta(seconds=1)
+    assert timedelta(days=7) - timedelta(seconds=1) < one_week <= timedelta(days=7) + timedelta(seconds=1)
 
 
 def test_in_30_seconds():
     now = _local_now()
-    assert timedelta(seconds=29) < (parse_relative("in 30 seconds", TZ) - now) <= timedelta(seconds=30)
+    delta = parse_relative("in 30 seconds", TZ) - now
+    assert timedelta(seconds=29) < delta <= timedelta(seconds=31)
 
 
 def test_in_0_minutes_is_already_due():

@@ -85,7 +85,7 @@ def test_reminders_when_empty(ctx):
 
 
 def test_reminders_lists_set_ones(ctx):
-    set_reminder_impl(ctx.conn, "Standup", "2026-10-01 09:00")
+    set_reminder_impl(ctx.conn, "Standup", "2027-10-01 09:00")
     assert "Standup" in handle("/reminders", ctx)
 
 

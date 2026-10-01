@@ -66,7 +66,7 @@ async def test_scheduling_specialist_does_timezone_math(tmp_path):
         [
             function_call(
                 "set_reminder",
-                {"title": "Standup", "due": "2026-10-01 09:00"},
+                {"title": "Standup", "due": "2027-10-01 09:00"},
                 call_id="c1",
             )
         ],
@@ -80,7 +80,7 @@ async def test_scheduling_specialist_does_timezone_math(tmp_path):
     row = conn.execute("SELECT title, due_at FROM reminders").fetchone()
     assert row["title"] == "Standup"
     # 09:00 naive resolves in Asia/Dhaka (UTC+6) -> 03:00 UTC
-    assert row["due_at"].startswith("2026-10-01T03:00")
+    assert row["due_at"].startswith("2027-10-01T03:00")
     model.assert_complete()
 
 
@@ -88,7 +88,7 @@ async def test_specialist_cannot_call_another_domains_tool(tmp_path):
     """Isolation must hold at runtime, not just in the tool lists."""
     conn = connect(tmp_path / "a.db")
     model = ScriptedModel([
-        [function_call("set_reminder", {"title": "X", "due": "2026-10-01 09:00"}, call_id="c1")],
+        [function_call("set_reminder", {"title": "X", "due": "2027-10-01 09:00"}, call_id="c1")],
         [assistant_message("Set.")],
     ])
     notes_agent = build_specialists(tmp_path / "a.db", tmp_path / "vault", model=model)["notes"]
@@ -104,8 +104,14 @@ async def test_specialist_does_not_receive_mcp_servers(tmp_path):
         assert not agent.mcp_servers
 
 
-async def test_due_reminders_sees_a_scheduled_reminder(tmp_path, monkeypatch):
-    """The watcher's query must agree with what the scheduling tool wrote."""
+async def test_past_reminder_is_refused_not_stored(tmp_path, monkeypatch):
+    """The reported bug, at the agent level.
+
+    The model used to pass a date from its stale idea of today. Such a
+    reminder is due immediately and fires on the next poll, so set_reminder
+    now refuses it. This asserts the refusal reaches the model as a tool
+    error rather than being stored and firing.
+    """
     monkeypatch.setenv("AVA_TZ", "Asia/Dhaka")
     conn = connect(tmp_path / "a.db")
     model = ScriptedModel([
@@ -116,14 +122,27 @@ async def test_due_reminders_sees_a_scheduled_reminder(tmp_path, monkeypatch):
                 call_id="c1",
             )
         ],
-        [assistant_message("Set.")],
+        [assistant_message("That time has passed.")],
     ])
     agent = build_specialists(tmp_path / "a.db", tmp_path / "vault", model=model)["scheduling"]
 
-    await Runner.run(agent, "set an old reminder", run_config=NO_TRACE)
+    result = await Runner.run(
+        agent, "set an old reminder", run_config=NO_TRACE
+    )
 
-    due = due_reminders(conn)
-    assert [r["title"] for r in due] == ["Past thing"]
+    # Nothing stored, so nothing can fire.
+    assert due_reminders(conn) == []
+    assert conn.execute("SELECT COUNT(*) FROM reminders").fetchone()[0] == 0
+
+    # The model is told what the real current time is, so it can retry rather
+    # than guessing a new absolute date from the same stale belief.
+    outputs = [
+        item.output
+        for item in result.new_items
+        if type(item).__name__ == "ToolCallOutputItem"
+    ]
+    assert outputs, "no tool output produced"
+    assert "current time is" in outputs[0].lower()
 
 
 async def test_unexpected_model_call_is_detected(tmp_path):
